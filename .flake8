@@ -1,0 +1,22 @@
+[flake8]
+max-line-length = 88
+per-file-ignores =
+    tests/*:F821,F722
+show-source = True
+statistics = False
+doctests = True
+pytest-fixture-no-parentheses = False
+pytest-parametrize-names-type = csv
+exclude =
+    .git,
+    .tox,
+    .venv,
+    .pytest_cache,
+    __pycache__,
+    build,
+    dist,
+    bin,
+    data,
+    docs,
+    test,
+    node_modules
