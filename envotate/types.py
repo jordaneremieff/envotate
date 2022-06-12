@@ -2,7 +2,8 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Pattern, Union
 
-from envotate.typing import AnnotatedClass, Value, Missing
+from envotate.exceptions import EnvValueError
+from envotate.typing import AnnotatedClass, Value
 
 
 @dataclass
@@ -12,8 +13,10 @@ class Method:
     def set_context(self, annotated_class: AnnotatedClass) -> None:
         self.context = annotated_class
 
-    def __call__(self, source: Union[Value, Missing]) -> Value:
-        return getattr(self.context, self.name)(source=source)
+    def __call__(self) -> Value:
+        method = getattr(self.context, self.name)
+
+        return method()
 
 
 @dataclass
@@ -23,8 +26,8 @@ class Function:
     def set_context(self, annotated_class: AnnotatedClass) -> None:
         self.context = annotated_class
 
-    def __call__(self, source: Union[Value, Missing]) -> Value:
-        return self.func(source=source, context=self.context)
+    def __call__(self) -> Value:
+        return self.func(context=self.context)
 
 
 @dataclass
@@ -35,9 +38,9 @@ class Default:
         if isinstance(self.default, (Method, Function)):
             self.default.set_context(annotated_class)
 
-    def get_default(self, source: Union[Value, Missing]) -> Value:
+    def get_default(self) -> Value:
         if isinstance(self.default, (Method, Function)):
-            return self.default(source)
+            return self.default()
         return self.default
 
 
@@ -45,32 +48,32 @@ class Default:
 class Split:
     delimiter: str = ","
 
-    def __call__(self, source: str) -> list[str]:
-        return source.split(self.delimiter)
+    def __call__(self, value: str) -> list[str]:
+        return value.split(self.delimiter)
 
 
 @dataclass
 class Match:
     pattern: Union[str, Pattern]
 
-    def __call__(self, source: str) -> str:
+    def __call__(self, value: str) -> str:
         if isinstance(self.pattern, str):
             regex = re.compile(self.pattern)
         else:
             regex = self.pattern
 
-        if regex.match(source):
-            return source
+        if regex.match(value):
+            return value
 
-        raise ValueError(f"{source} does not match {self.pattern}")
+        raise EnvValueError(f"{value} does not match {self.pattern}")
 
 
 @dataclass
 class Choice:
     choices: list[str]
 
-    def __call__(self, source: Value) -> Value:
-        if source in self.choices:
-            return source
+    def __call__(self, value: Value) -> Value:
+        if value in self.choices:
+            return value
 
-        raise ValueError(f"{source} is not a valid choice ({self.choices}).")
+        raise EnvValueError(f"{value} is not a valid choice ({self.choices}).")

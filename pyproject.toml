@@ -23,7 +23,7 @@ exclude = '''
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-v --durations=10 -p no:logging -s --ignore .venv"
+addopts = "-v --durations=10 -p no:logging -s --ignore .venv --cov=envotate --cov-fail-under=100 --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = [".", "envotate"]
 norecursedirs = [
