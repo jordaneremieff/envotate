@@ -6,6 +6,8 @@ Settings management using environment variables and type annotations. This inten
 
 ## Example
 
+<img src="https://user-images.githubusercontent.com/1376648/173243159-af22ce43-c7b9-4854-9187-aec83342bce0.gif" width="50%" height="50%"/>
+
 Define a configuration like this:
 
 ```python
