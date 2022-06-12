@@ -13,7 +13,7 @@ setup(
     url="https://github.com/jordaneremieff/envotate",
     description="Settings management using environment variables and type annotations.",
     long_description=get_long_description(),
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     package_data={"envotate": ["py.typed"]},
     long_description_content_type="text/markdown",
     author="Jordan Eremieff",
@@ -24,5 +24,6 @@ setup(
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
     ],
 )
