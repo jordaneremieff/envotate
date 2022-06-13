@@ -65,39 +65,6 @@ def test_populate_class_with_nested_env_class(monkeypatch):
     assert Conf.DATABASE.DB_NAME == "mydb"
 
 
-def test_populate_class_with_prefix(monkeypatch):
-    monkeypatch.setenv("DB_USER", "admin")
-    monkeypatch.setenv("DB_PASSWORD", "password123")
-    monkeypatch.setenv("DB_HOST", "127.0.0.1")
-    monkeypatch.setenv("DB_PORT", "5433")
-    monkeypatch.setenv("DB_NAME", "mydb")
-
-    @env
-    class DatabaseWithPrefix:
-        USER: str
-        PASSWORD: str
-        HOST: str
-        PORT: int
-        DATABASE_NAME: str
-
-        class Config:
-            prefix = "DB_"
-            aliases = {"DATABASE_NAME": "NAME"}
-
-    @env
-    class Conf:
-        APP_ENV: str = "local"
-        DATABASE: DatabaseWithPrefix
-
-    assert Conf.APP_ENV == "local"
-    assert Conf.DATABASE is DatabaseWithPrefix
-    assert Conf.DATABASE.USER == "admin"
-    assert Conf.DATABASE.PASSWORD == "password123"
-    assert Conf.DATABASE.HOST == "127.0.0.1"
-    assert Conf.DATABASE.PORT == 5433
-    assert Conf.DATABASE.DATABASE_NAME == "mydb"
-
-
 def test_replace_base_and_nested_annotations(monkeypatch):
 
     env_user = "admin"
