@@ -59,16 +59,7 @@ def load_variable(
     annotated_class: AnnotatedClass,
     origin: Optional[type],
 ) -> tuple[str, Value]:
-
-    if config := getattr(annotated_class, "Config", None):
-        if config.aliases and name in config.aliases:
-            env_name = f"{config.prefix}{config.aliases[name]}"
-        else:
-            env_name = f"{config.prefix}{name}"
-    else:
-        env_name = name
-
-    source: Any = os.environ.get(env_name, getattr(annotated_class, name, Missing()))
+    source: Any = os.environ.get(name, getattr(annotated_class, name, Missing()))
     if not origin and isinstance(source, Missing):
         raise EnvValueError(
             f"'{name}' is missing from the environment but does not assign a default."
@@ -89,6 +80,7 @@ def load_variable(
         for arg in annotated_args:
             if isinstance(arg, AnnotatedArg):
                 source = arg(source)
+
     elif annotation is bool:
         source = str(source).strip().lower()
         if source not in BOOLEAN_TRUE_VALUES and source not in BOOLEAN_FALSE_VALUES:
@@ -145,7 +137,7 @@ def populate_module(module_name: str) -> AnnotatedClass:
         module_name,
         (),
         {
-            **{"__annotations__": annotated_module.__annotations__, "__prefix__": ""},
+            **{"__annotations__": annotated_module.__annotations__},
             **{
                 k: v
                 for k, v in annotated_module.__dict__.items()
@@ -159,9 +151,7 @@ def populate_module(module_name: str) -> AnnotatedClass:
     return annotated_class
 
 
-def env(
-    configuration: Union[AnnotatedClass, str],
-) -> AnnotatedClass:
+def env(configuration: Union[AnnotatedClass, str]) -> AnnotatedClass:
     if isinstance(configuration, str):
         annotated_class = populate_module(configuration)
     else:
