@@ -61,9 +61,8 @@ def load_variable(
 ) -> tuple[str, Value]:
 
     if config := getattr(annotated_class, "Config", None):
-        aliases = config.aliases
         if config.aliases and name in config.aliases:
-            env_name = f"{config.prefix}{aliases[name]}"
+            env_name = f"{config.prefix}{config.aliases[name]}"
         else:
             env_name = f"{config.prefix}{name}"
     else:
