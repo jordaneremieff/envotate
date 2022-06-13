@@ -37,7 +37,11 @@ BOOLEAN_TRUE_VALUES = {"true", "yes", "y", "1"}
 BOOLEAN_FALSE_VALUES = {"false", "no", "n", "0"}
 
 
-def cast_variable(name: str, source: Any, annotation: type) -> Value:
+def cast_variable(
+    name: str,
+    source: Any,
+    annotation: type,
+) -> Value:
     try:
         value = annotation(source)
     except (ValueError, TypeError) as exc:
@@ -50,9 +54,17 @@ def cast_variable(name: str, source: Any, annotation: type) -> Value:
 
 
 def load_variable(
-    name: str, annotation: type, annotated_class: AnnotatedClass, origin: Optional[type]
+    name: str,
+    annotation: type,
+    annotated_class: AnnotatedClass,
+    origin: Optional[type],
 ) -> tuple[str, Value]:
     source: Any = os.environ.get(name, getattr(annotated_class, name, Missing()))
+    if not origin and isinstance(source, Missing):
+        raise EnvValueError(
+            f"'{name}' is missing from the environment but does not assign a default."
+        )
+
     if origin:
         annotated_args = list(get_args(annotation))
         annotation = get_root_arg(annotated_args.pop(0))
@@ -62,18 +74,14 @@ def load_variable(
                 source = default_arg.get_default()
         elif isinstance(source, Missing):
             raise EnvValueError(
-                f"{name} is missing, but {annotation} does not support a default value."
+                f"{name} is missing from the environment but does not include a "
+                "'Default' metadata argument."
             )
         for arg in annotated_args:
             if isinstance(arg, AnnotatedArg):
                 source = arg(source)
 
-    if isinstance(source, Missing):
-        raise EnvValueError(
-            f"'{name}' is missing from the environment with no default."
-        )
-
-    if annotation is bool and not origin:
+    elif annotation is bool:
         source = str(source).strip().lower()
         if source not in BOOLEAN_TRUE_VALUES and source not in BOOLEAN_FALSE_VALUES:
             raise EnvValueError(
@@ -110,35 +118,43 @@ def iter_variables(
         # Recursively populate a nested annotated class, or retrieve the validated value
         # for the current annotation.
         if is_nested:
-            populate_variables(annotation)
+            populate_class(annotation)
             yield name, annotation
         else:
             yield load_variable(name, annotation, annotated_class, origin)
 
 
-def populate_variables(
-    annotated_class: AnnotatedClass,
-) -> None:
+def populate_class(annotated_class: AnnotatedClass) -> AnnotatedClass:
     for name, value in iter_variables(annotated_class):
         setattr(annotated_class, name, value)
 
+    return annotated_class
 
-def env(class_or_module_name: Union[AnnotatedClass, str]) -> AnnotatedClass:
-    if not isinstance(class_or_module_name, str):
-        annotated_class = class_or_module_name
-        populate_variables(class_or_module_name)
+
+def populate_module(module_name: str) -> AnnotatedClass:
+    annotated_module = importlib.import_module(module_name)
+    annotated_class = type(
+        module_name,
+        (),
+        {
+            **{"__annotations__": annotated_module.__annotations__},
+            **{
+                k: v
+                for k, v in annotated_module.__dict__.items()
+                if not k.startswith("_") and not callable(v)
+            },
+        },
+    )
+    populate_class(annotated_class)
+    sys.modules[module_name].__dict__.update(**annotated_class.__dict__)
+
+    return annotated_class
+
+
+def env(configuration: Union[AnnotatedClass, str]) -> AnnotatedClass:
+    if isinstance(configuration, str):
+        annotated_class = populate_module(configuration)
     else:
-        annotated_module = importlib.import_module(class_or_module_name)
-        annotated_class = type(
-            class_or_module_name,
-            (),
-            annotated_module.__dict__,
-        )
-        annotated_class.__annotations__ = annotated_module.__annotations__
-        populate_variables(annotated_class)
-        for name, value in annotated_class.__dict__.items():
-            if name.startswith("_") or callable(value):
-                continue
-            setattr(sys.modules[class_or_module_name], name, value)
+        annotated_class = populate_class(configuration)
 
     return annotated_class
