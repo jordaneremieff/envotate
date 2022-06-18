@@ -1,7 +1,10 @@
 # conftest.py
+from __future__ import annotations
+
 import builtins
-from rich import print
+
 import rich.traceback
+from rich import print
 
 pytest_plugins = "pytester"
 
@@ -9,4 +12,4 @@ pytest_plugins = "pytester"
 builtins.print = print
 
 rich.traceback.install()
-print("")
+print(" ")

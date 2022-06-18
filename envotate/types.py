@@ -1,17 +1,19 @@
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
-from typing import Callable, Pattern, Union
+from typing import Callable, Pattern, Type, Union
 
 from envotate.exceptions import EnvValueError
-from envotate.typing import AnnotatedClass, Value
+from envotate.typing import Value
 
 
 @dataclass
 class Method:
     name: str
 
-    def set_context(self, annotated_class: AnnotatedClass) -> None:
-        self.context = annotated_class
+    def set_context(self, cls: Type) -> None:
+        self.context = cls
 
     def __call__(self) -> Value:
         method = getattr(self.context, self.name)
@@ -23,25 +25,11 @@ class Method:
 class Function:
     func: Callable
 
-    def set_context(self, annotated_class: AnnotatedClass) -> None:
-        self.context = annotated_class
+    def set_context(self, cls: Type) -> None:
+        self.context = cls
 
     def __call__(self) -> Value:
         return self.func(context=self.context)
-
-
-@dataclass
-class Default:
-    default: Union[Method, Function, Value]
-
-    def set_context(self, annotated_class: AnnotatedClass) -> None:
-        if isinstance(self.default, (Method, Function)):
-            self.default.set_context(annotated_class)
-
-    def get_default(self) -> Value:
-        if isinstance(self.default, (Method, Function)):
-            return self.default()
-        return self.default
 
 
 @dataclass

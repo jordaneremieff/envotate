@@ -1,7 +1,7 @@
 [flake8]
 max-line-length = 88
 per-file-ignores =
-    tests/*:F821,F722
+    tests/*:F841,F821,F722
 show-source = True
 statistics = False
 doctests = True
