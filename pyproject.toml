@@ -49,6 +49,10 @@ norecursedirs = [
   "__pycache__",
 ]
 
+[tool.isort]
+profile = "black"
+skip_gitignore = true
+add_imports = "from __future__ import annotations"
 
 [tool.poetry]
 name = "envotate"
@@ -77,6 +81,7 @@ mkautodoc = "^0.1.0"
 Pygments = "^2.12.0"
 pymdown-extensions = "^9.4"
 rich = "^12.4.4"
+isort = "^5.10.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

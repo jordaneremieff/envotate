@@ -1,8 +1,8 @@
 # Envotate
 
-**Work in progress**
+**Work in progress**: Things may change/break at this point.
 
-Settings management using environment variables and type annotations. This intended to support both class-based and module-based configurations.
+Settings management using environment variables and type annotations.
 
 **Requirements**: Python 3.9+
 
@@ -14,17 +14,15 @@ pip install envotate
 
 ## Example
 
-<img src="https://user-images.githubusercontent.com/1376648/173243159-af22ce43-c7b9-4854-9187-aec83342bce0.gif" width="50%" height="50%"/>
-
 Define a configuration like this:
 
 ```python
 # app/settings.py
-from envotate.env import Env, env
+from envotate import envotate
 from envotate.types import Choice, Default
 
 
-@env
+@envotate
 class Database:
     DB_USER: str
     DB_PASSWORD: str
@@ -37,11 +35,11 @@ PY_39 = "py39"
 PY_310 = "py310"
 
 
-@env
+@envotate
 class Settings:
     DATABASE: Database
     DEBUG: bool = False
-    PY_VERSION: Env[str, Choice([PY_39, PY_310]), Default(PY_39)]
+    PY_VERSION: Env[str, Choice([PY_39, PY_310])]
 
 ```
 
