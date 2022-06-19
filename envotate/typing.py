@@ -25,17 +25,6 @@ class ArgWithCls(Protocol):
         ...  # pragma: no cover
 
 
-# class Class(Protocol):
-#     # def __getitem__(self, name: str) -> object:
-#     #     ...
-
-#     # def __annotations__(self) -> dict:
-#     #     ...
-
-#     def __class_getitem__(cls, item):
-#         ...  # pragma: no cover
-
-
 Class = TypeVar("Class")
 
 
