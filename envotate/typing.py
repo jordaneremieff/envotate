@@ -3,9 +3,8 @@ from __future__ import annotations
 from typing import (
     Generator,
     Protocol,
-    Type,
+    TypeVar,
     Union,
-    get_args,
     get_origin,
     get_type_hints,
     runtime_checkable,
@@ -13,39 +12,49 @@ from typing import (
 
 from typing_extensions import TypeAlias
 
-Value: TypeAlias = Union[set, str, list, dict, float, int, bool, None]
-
 
 @runtime_checkable
-class AnnotatedArg(Protocol):
+class Arg(Protocol):
     def __call__(self, value: Value) -> Value:
         ...  # pragma: no cover
 
 
 @runtime_checkable
-class SupportsContext(Protocol):
-    def set_context(self, cls: Type) -> None:
+class ArgWithCls(Protocol):
+    def set_cls(self, cls: type) -> None:
         ...  # pragma: no cover
 
 
-def is_cls(
-    obj: object,
-) -> bool:
-    return bool(obj and obj is not object and hasattr(obj, "__annotations__"))
+# class Class(Protocol):
+#     # def __getitem__(self, name: str) -> object:
+#     #     ...
+
+#     # def __annotations__(self) -> dict:
+#     #     ...
+
+#     def __class_getitem__(cls, item):
+#         ...  # pragma: no cover
 
 
-def iter_annotations(
-    cls: Type,
-) -> Generator[tuple[str, Union[type, Type], bool], None, None]:
+Class = TypeVar("Class")
+
+
+Value: TypeAlias = Union[set, str, list, dict, float, int, bool, None]
+
+
+def get_type_hints_with_extras(
+    cls: type,
+) -> Generator[tuple[str, type, bool], None, None]:
     for base in cls.__mro__:
+        if not base or base is object:
+            continue
         for name, annotation in get_type_hints(base, include_extras=True).items():
-            yield name, annotation, is_cls(annotation)
-
-
-def update_args(annotation: type, cls: Type) -> None:
-    for arg in get_args(annotation):
-        if isinstance(arg, SupportsContext):
-            arg.set_context(cls)
+            nested = bool(
+                annotation
+                and annotation is not object
+                and hasattr(annotation, "__annotations__")
+            )
+            yield name, annotation, nested
 
 
 def get_root_arg(annotation: type) -> type:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from typing import Callable, Pattern, Type, Union
+import re
+from typing import Callable, Pattern, Union
 
 from envotate.exceptions import EnvValueError
 from envotate.typing import Value
@@ -12,24 +12,24 @@ from envotate.typing import Value
 class Method:
     name: str
 
-    def set_context(self, cls: Type) -> None:
-        self.context = cls
+    def set_cls(self, cls: type) -> None:
+        self.cls = cls
 
-    def __call__(self) -> Value:
-        method = getattr(self.context, self.name)
+    def __call__(self, value: Value) -> Value:
+        method = getattr(self.cls, self.name)
 
-        return method()
+        return method(value=value)
 
 
 @dataclass
 class Function:
     func: Callable
 
-    def set_context(self, cls: Type) -> None:
-        self.context = cls
+    def set_cls(self, cls: type) -> None:
+        self.cls = cls
 
-    def __call__(self) -> Value:
-        return self.func(context=self.context)
+    def __call__(self, value: Value) -> Value:
+        return self.func(cls=self.cls, value=value)
 
 
 @dataclass
