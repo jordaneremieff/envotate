@@ -1,12 +1,15 @@
+# type: ignore
+# flake8: noqa
 from __future__ import annotations
 
 import re
+from typing import Annotated
 
 import pytest
 
-from envotate import Env, envotate
+from envotate import envotate
 from envotate.exceptions import EnvValueError
-from envotate.types import Choice, Match, Split
+from envotate.types import Choice, Function, Match, Method, Split
 
 
 def test_arg_with_no_default():
@@ -14,7 +17,7 @@ def test_arg_with_no_default():
 
         @envotate
         class Settings:
-            APP_ENV: Env[
+            APP_ENV: Annotated[
                 str,
                 Match(pattern=r"^(prod|stag|dev)$"),
             ]
@@ -24,13 +27,13 @@ def test_arg_with_no_default():
 
 def test_regex_arg(monkeypatch):
     class RegexSettings:
-        ALLOWED_HOSTS: Env[
+        ALLOWED_HOSTS: Annotated[
             list[str],
             Match(pattern=r"^(localhost|127.0.0.1|local.host)$"),
             Split(delimiter="|"),
         ]
 
-        ALLOWED_HOSTS_COMPILED: Env[
+        ALLOWED_HOSTS_COMPILED: Annotated[
             list[str],
             Match(pattern=re.compile(r"^(localhost|127.0.0.1|local.host)$")),
             Split(delimiter="|"),
@@ -43,11 +46,11 @@ def test_regex_arg(monkeypatch):
 
         @envotate
         class Settings(RegexSettings):
-            APP_ENV: Env[
+            APP_ENV: Annotated[
                 str,
                 Match(pattern=r"^(prod|stag|dev)$"),
             ] = "dev"
-            VERSION: Env[
+            VERSION: Annotated[
                 str,
                 Match(pattern=r"^(py39|py310)$"),
                 Choice(["py39"]),
@@ -67,7 +70,7 @@ def test_value_does_not_match_regex_pattern(monkeypatch):
 
         @envotate
         class RegexSettings:
-            ALLOWED_HOSTS: Env[
+            ALLOWED_HOSTS: Annotated[
                 list[str],
                 Match(pattern=r"^(localhost|127.0.0.1|local.host)$"),
                 Split(delimiter="|"),
@@ -82,7 +85,7 @@ def test_value_is_not_supported_for_choice(monkeypatch):
 
         @envotate
         class Settings:
-            PY_VERSION: Env[
+            PY_VERSION: Annotated[
                 str,
                 Choice(["py39", "py310"]),
             ]
@@ -90,22 +93,43 @@ def test_value_is_not_supported_for_choice(monkeypatch):
     assert excinfo.match("is not a valid choice")
 
 
-# def test_method_arg():
-#     @envotate
-#     class URLSettings:
-#         APP_ENV: str = "prod"
-#         DOMAIN: str = "mysite.com"
-#         PUBLIC_URL: Env[str, Method("make_public_url")]
+def test_method_arg():
+    @envotate
+    class URLSettings:
+        APP_ENV: str = "prod"
+        DOMAIN: str = "mysite.com"
+        PUBLIC_URL: Annotated[str, Method("make_public_url")] = ""
 
-#         @classmethod
-#         def make_public_url(cls) -> str:
-#             if cls.APP_ENV == "prod":
-#                 url = f"https://www.{cls.DOMAIN\}/"
-#             elif cls.APP_ENV == "staging":
-#                 url = f"http://staging.{cls.DOMAIN\}/"
-#             else:
-#                 url = "http://localhost:8000/"
+        @classmethod
+        def make_public_url(cls, **kwargs) -> str:
+            if cls.APP_ENV == "prod":
+                url = f"https://www.{cls.DOMAIN}/"
+            elif cls.APP_ENV == "staging":
+                url = f"http://staging.{cls.DOMAIN}/"
+            else:
+                url = "http://localhost:8000/"
 
-#             return url
+            return url
 
-#     assert URLSettings.PUBLIC_URL == "https://www.mysite.com/"
+    assert URLSettings.PUBLIC_URL == "https://www.mysite.com/"
+
+
+def make_public_url(cls, **kwargs) -> str:
+    if cls.APP_ENV == "prod":
+        url = f"https://www.{cls.DOMAIN}/"
+    elif cls.APP_ENV == "staging":
+        url = f"http://staging.{cls.DOMAIN}/"
+    else:
+        url = "http://localhost:8000/"
+
+    return url
+
+
+def test_function_arg():
+    @envotate
+    class URLSettings:
+        APP_ENV: str = "prod"
+        DOMAIN: str = "mysite.com"
+        PUBLIC_URL: Annotated[str, Function(make_public_url)] = ""
+
+    assert URLSettings.PUBLIC_URL == "https://www.mysite.com/"

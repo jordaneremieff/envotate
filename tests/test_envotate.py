@@ -1,11 +1,14 @@
+# type: ignore
+# flake8: noqa
 from __future__ import annotations
 
+import sys
 from typing import Literal, Optional, Union
 
 import pytest
 
 from envotate import FALSEY_VARS, TRUTHY_VARS, envotate
-from envotate.exceptions import EnvValueError
+from envotate.exceptions import EnvTypeError, EnvValueError
 
 
 class Database:
@@ -24,11 +27,6 @@ class Settings:
     DATABASE: Database
 
 
-@envotate
-class DatabaseExtra(Database):
-    DB_EXTRA: str = "extra"
-
-
 @pytest.fixture(autouse=True)
 def default_test_settings_environ(monkeypatch):
     monkeypatch.setenv("APP_ID", "2")
@@ -41,13 +39,30 @@ def default_test_settings_environ(monkeypatch):
     monkeypatch.setenv("DB_NAME", "local_db")
 
 
+@pytest.fixture()
+def patch_module_for_class(monkeypatch):
+    """Patch the module namespace to include any nested annotated classes defined in the
+    body of a test function for the duration of a particular test.
+
+    This is to avoid a 'NameError' when 'get_type_hints()' attempts to evaluate these
+    annotations in tests, but not intended to represent a recommended pattern.
+    """
+
+    def inner(cls):
+        monkeypatch.setitem(sys.modules[cls.__module__].__dict__, cls.__name__, cls)
+
+    return inner
+
+
 def test_populate_from_environment():
     @envotate
     class TestSettings(Settings):
         APP_VERSION: str = "0.2.0"
+        CALLABLE: str = lambda: "callable"
         DATABASE: Database
 
     assert TestSettings.APP_ENV == "dev"
+    assert TestSettings.CALLABLE == "callable"
     assert TestSettings.DEBUG is True
     assert TestSettings.DATABASE is Database
     assert TestSettings.DATABASE.DB_USER == "postgres"
@@ -57,7 +72,13 @@ def test_populate_from_environment():
     assert TestSettings.DATABASE.DB_NAME == "local_db"
 
 
-def test_populate_with_nested_configuration():
+def test_populate_with_nested_configuration(patch_module_for_class):
+    @envotate
+    class DatabaseExtra(Database):
+        DB_EXTRA: str = "extra"
+
+    patch_module_for_class(DatabaseExtra)
+
     @envotate
     class TestSettings(Settings):
         APP_VERSION: str = "0.2.0"
@@ -74,8 +95,7 @@ def test_populate_with_nested_configuration():
 
 @pytest.mark.parametrize(
     "support_boolean_string, expected_boolean_constant",
-    [(i, True) for i in TRUTHY_VARS]  # type: ignore
-    + [(i, False) for i in FALSEY_VARS],
+    [(i, True) for i in TRUTHY_VARS] + [(i, False) for i in FALSEY_VARS],
 )
 def test_cast_to_bool_for_known_boolean_strings(
     monkeypatch, support_boolean_string, expected_boolean_constant
@@ -113,6 +133,28 @@ def test_raise_value_error_for_unknown_boolean_strings(
             DEBUG: bool
 
     assert excinfo.match("DEBUG")
+
+
+def test_raise_type_error_for_invalid_value(monkeypatch):
+    monkeypatch.setenv("INT", "1.1")
+    monkeypatch.setenv("FLOAT", "string")
+    with pytest.raises(EnvTypeError) as excinfo:
+
+        @envotate
+        class TestSettings(Settings):
+            INT: int
+
+    assert excinfo.match("INT")
+
+    with pytest.raises(EnvTypeError) as excinfo:
+
+        @envotate
+        class TestSettings(Settings):
+            FLOAT: float
+
+    assert excinfo.match("FLOAT")
+
+    # TODO: Test this using the special types.
 
 
 def test_unsupported_origin_types():
@@ -173,3 +215,27 @@ def test_export_all_attributes_to_module():
     assert ExportAll.NESTED_SETTINGS.NESTED_STR == "nested"
     assert ExportAll.NESTED_SETTINGS.NESTED_BOOL is False
     assert ExportAll.NESTED_SETTINGS.method() == 123
+
+
+def test_prefix_for_environment_variables(patch_module_for_class):
+    @envotate(prefix="DB_")
+    class DB:
+        USER: str
+        PASSWORD: str
+        HOST: str
+        PORT: int
+        NAME: str
+
+    patch_module_for_class(DB)
+
+    @envotate
+    class Settings:
+        DEBUG: bool
+        DATABASE: DB
+
+    assert Settings.DEBUG is True
+    assert Settings.DATABASE.USER == "postgres"
+    assert Settings.DATABASE.PASSWORD == "password"
+    assert Settings.DATABASE.HOST == "localhost"
+    assert Settings.DATABASE.PORT == 5432
+    assert Settings.DATABASE.NAME == "local_db"

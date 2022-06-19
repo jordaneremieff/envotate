@@ -14,32 +14,40 @@ pip install envotate
 
 ## Example
 
+Set the following variables in the environment:
+
+```shell
+DEBUG=true
+PY_VERSION=py39
+DB_USER=admin
+DB_PASSWORD=password
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=postgres
+```
+
 Define a configuration like this:
 
 ```python
 # app/settings.py
-from envotate import envotate
-from envotate.types import Choice, Default
+from envotate import envotate, Annotated
+from envotate.types import Choice
 
 
-@envotate
+@envotate(prefix="DB_")
 class Database:
-    DB_USER: str
-    DB_PASSWORD: str
-    DB_HOST: str
-    DB_PORT: int
-    DB_NAME: str
-
-
-PY_39 = "py39"
-PY_310 = "py310"
+    USER: str
+    PASSWORD: str
+    HOST: str
+    PORT: int
+    NAME: str
 
 
 @envotate
 class Settings:
+    DEBUG: bool
     DATABASE: Database
-    DEBUG: bool = False
-    PY_VERSION: Env[str, Choice([PY_39, PY_310])]
+    PY_VERSION: Annotated[str, Choice(["py39", "py310"])]
 
 ```
 
@@ -51,10 +59,32 @@ from app.settings import Settings
 
 
 def main():
-    print(Settings.DATABASE.DB_NAME)
+    print(Settings.__dict__)
 
 
 if __name__ == "__main__":
     main()
 
+```
+
+Output:
+
+```python
+mappingproxy(
+    {
+        '__module__': 'app.settings',
+        '__annotations__': {
+            'DEBUG': 'bool', 
+            'DATABASE': 'Database', 
+            'PY_VERSION': "Annotated[str, Choice(['py39', 'py310'])]"
+        },
+        '__dict__': <attribute '__dict__' of 'Settings' objects>,
+        '__weakref__': <attribute '__weakref__' of 'Settings' objects>,
+        '__doc__': None,
+        '__envotations__': {'PY_VERSION', 'DEBUG', 'DATABASE'},
+        'DEBUG': True,
+        'DATABASE': <class 'app.settings.Database'>,
+        'PY_VERSION': 'py39'
+    }
+)
 ```
