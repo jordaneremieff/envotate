@@ -180,7 +180,7 @@ def envotate(
 
     * **cls** - A class with annotations that will be used to validate and populate its
     attributes from either the environment or the class defaults. An attribute must
-    be annot
+    be annotated to be loaded.
     * **prefix** - A string prefix used to form the environment lookup key for each
     annotation (except nested classes) discovered in the root class or any of its
     bases. Default is `""`.
