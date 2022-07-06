@@ -7,8 +7,8 @@ from typing import Literal, Optional, Union
 
 import pytest
 
-from envotate import FALSEY_VARS, TRUTHY_VARS, envotate
-from envotate.exceptions import EnvTypeError, EnvValueError
+from envotate import FALSEY, TRUTHY, envotate
+from envotate.errors import VariableError
 
 
 class Database:
@@ -39,21 +39,6 @@ def default_test_settings_environ(monkeypatch):
     monkeypatch.setenv("DB_NAME", "local_db")
 
 
-@pytest.fixture()
-def patch_module_for_class(monkeypatch):
-    """Patch the module namespace to include any nested annotated classes defined in the
-    body of a test function for the duration of a particular test.
-
-    This is to avoid a 'NameError' when 'get_type_hints()' attempts to evaluate these
-    annotations in tests, but not intended to represent a recommended pattern.
-    """
-
-    def inner(cls):
-        monkeypatch.setitem(sys.modules[cls.__module__].__dict__, cls.__name__, cls)
-
-    return inner
-
-
 def test_populate_from_environment():
     @envotate
     class TestSettings(Settings):
@@ -72,12 +57,12 @@ def test_populate_from_environment():
     assert TestSettings.DATABASE.DB_NAME == "local_db"
 
 
-def test_populate_with_nested_configuration(patch_module_for_class):
+def test_populate_with_nested_configuration(export_to_module):
     @envotate
     class DatabaseExtra(Database):
         DB_EXTRA: str = "extra"
 
-    patch_module_for_class(DatabaseExtra)
+    export_to_module(DatabaseExtra)
 
     @envotate
     class TestSettings(Settings):
@@ -95,7 +80,7 @@ def test_populate_with_nested_configuration(patch_module_for_class):
 
 @pytest.mark.parametrize(
     "support_boolean_string, expected_boolean_constant",
-    [(i, True) for i in TRUTHY_VARS] + [(i, False) for i in FALSEY_VARS],
+    [(i, True) for i in TRUTHY] + [(i, False) for i in FALSEY],
 )
 def test_cast_to_bool_for_known_boolean_strings(
     monkeypatch, support_boolean_string, expected_boolean_constant
@@ -126,7 +111,7 @@ def test_raise_value_error_for_unknown_boolean_strings(
 ):
     monkeypatch.setenv("DEBUG", unknown_boolean_string)
 
-    with pytest.raises(EnvValueError) as excinfo:
+    with pytest.raises(VariableError) as excinfo:
 
         @envotate
         class TestSettings(Settings):
@@ -138,7 +123,7 @@ def test_raise_value_error_for_unknown_boolean_strings(
 def test_raise_type_error_for_invalid_value(monkeypatch):
     monkeypatch.setenv("INT", "1.1")
     monkeypatch.setenv("FLOAT", "string")
-    with pytest.raises(EnvTypeError) as excinfo:
+    with pytest.raises(VariableError) as excinfo:
 
         @envotate
         class TestSettings(Settings):
@@ -146,7 +131,7 @@ def test_raise_type_error_for_invalid_value(monkeypatch):
 
     assert excinfo.match("INT")
 
-    with pytest.raises(EnvTypeError) as excinfo:
+    with pytest.raises(VariableError) as excinfo:
 
         @envotate
         class TestSettings(Settings):
@@ -157,24 +142,29 @@ def test_raise_type_error_for_invalid_value(monkeypatch):
     # TODO: Test this using the special types.
 
 
-def test_unsupported_origin_types():
+def test_optional_literal_and_union_types(monkeypatch):
+
+    monkeypatch.setenv("APP_VERSION", "0.1.0")
+    monkeypatch.setenv("PY_VERSION", "3.9")
+
     @envotate
     class TestSettings:
         APP_NAME: Optional[str]
         APP_VERSION: Literal["0.1.0"]
         PY_VERSION: Union[Literal["3.10"], Literal["3.9"]]
 
-    with pytest.raises(AttributeError) as excinfo:
-        TestSettings.APP_NAME
-    assert excinfo.match("APP_NAME")
+    print(TestSettings.PY_VERSION)
+    # with pytest.raises(AttributeError) as excinfo:
+    #     TestSettings.APP_NAME
+    # assert excinfo.match("APP_NAME")
 
-    with pytest.raises(AttributeError) as excinfo:
-        TestSettings.APP_VERSION
-    assert excinfo.match("APP_VERSION")
+    # with pytest.raises(AttributeError) as excinfo:
+    #     TestSettings.APP_VERSION
+    # assert excinfo.match("APP_VERSION")
 
-    with pytest.raises(AttributeError) as excinfo:
-        TestSettings.PY_VERSION
-    assert excinfo.match("PY_VERSION")
+    # with pytest.raises(AttributeError) as excinfo:
+    #     TestSettings.PY_VERSION
+    # assert excinfo.match("PY_VERSION")
 
 
 def test_export_all_attributes_to_module():
@@ -217,8 +207,8 @@ def test_export_all_attributes_to_module():
     assert ExportAll.NESTED_SETTINGS.method() == 123
 
 
-def test_prefix_for_environment_variables(patch_module_for_class):
-    @envotate(prefix="DB_")
+def test_load_from_environment_using_prefix(export_to_module):
+    @envotate(prefix="DB")
     class DB:
         USER: str
         PASSWORD: str
@@ -226,7 +216,7 @@ def test_prefix_for_environment_variables(patch_module_for_class):
         PORT: int
         NAME: str
 
-    patch_module_for_class(DB)
+    export_to_module(DB)
 
     @envotate
     class Settings:
@@ -237,5 +227,64 @@ def test_prefix_for_environment_variables(patch_module_for_class):
     assert Settings.DATABASE.USER == "postgres"
     assert Settings.DATABASE.PASSWORD == "password"
     assert Settings.DATABASE.HOST == "localhost"
+    assert Settings.DATABASE.PORT == 5432
+    assert Settings.DATABASE.NAME == "local_db"
+
+
+def test_load_from_environment_using_aliases(export_to_module):
+    @envotate(
+        aliases={
+            "USER": "DB_USER",
+            "PASSWORD": "DB_PASSWORD",
+            "HOST": "DB_HOST",
+            "PORT": "DB_PORT",
+            "NAME": "DB_NAME",
+        }
+    )
+    class DB:
+        USER: str
+        PASSWORD: str
+        HOST: str
+        PORT: int
+        NAME: str
+
+    export_to_module(DB)
+
+    @envotate
+    class Settings:
+        DEBUG: bool
+        DATABASE: DB
+
+    assert Settings.DEBUG is True
+    assert Settings.DATABASE.USER == "postgres"
+    assert Settings.DATABASE.PASSWORD == "password"
+    assert Settings.DATABASE.HOST == "localhost"
+    assert Settings.DATABASE.PORT == 5432
+    assert Settings.DATABASE.NAME == "local_db"
+
+
+def test_load_from_environment_using_prefix_and_aliases(export_to_module):
+    @envotate(
+        prefix="DB",
+        aliases={"USERNAME": "USER", "PASS": "PASSWORD", "HOSTNAME": "HOST"},
+    )
+    class DB:
+        USERNAME: str
+        PASS: str
+        HOSTNAME: str
+        PORT: int
+        NAME: str
+
+    export_to_module(DB)
+
+    @envotate
+    class Settings:
+        DEBUG: bool
+        DATABASE: DB
+
+    assert Settings.DEBUG is True
+    assert Settings.DATABASE.USERNAME == "postgres"
+    assert Settings.DATABASE.PASS == "password"
+    assert Settings.DATABASE.HOSTNAME == "localhost"
     assert Settings.DATABASE.PORT == 5432
     assert Settings.DATABASE.NAME == "local_db"
