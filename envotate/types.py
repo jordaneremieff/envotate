@@ -157,7 +157,6 @@ class DjangoDSN:
 
     def apply(self, value: str) -> DjangoDB:
         dsn = urlparse(value)
-
         if dsn.scheme == "":
             raise ValueError("DSN must have a scheme.")
         if dsn.scheme in ("postgresql", "postgres"):
@@ -195,27 +194,3 @@ class DjangoDSN:
             "AUTOCOMMIT": self.autocommit,
             "ATOMIC_REQUESTS": self.atomic_requests,
         }
-
-
-# f"postgresql://postgres:mangum@{hostname}:{host_port}/postgres"
-
-
-# dialect[+driver]://user:password@host/dbname[?key=value..]
-
-# @dataclass
-# class PostgresDSN:
-#     schemes: set[str] = {"postgresql", "postgres"}
-#     drivers: Optional[set[str]] = None
-
-
-#     def apply(self, value: str) -> Value:
-#         parsed_dsn = urlparse(value)
-#         if parsed_dsn.scheme not in self.scheme:
-
-
-#         return value
-
-
-#      "postgresql://[userspec@][hostspec][/dbname][?paramspec]"
-
-# #     """[scheme]://[userspec@][hostspec][/dbname][?paramspec]"""
