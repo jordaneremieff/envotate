@@ -7,56 +7,80 @@ from typing import (
     Annotated,
     Callable,
     Generator,
+    Literal,
     Optional,
     Union,
     get_args,
     get_origin,
+    get_type_hints,
     overload,
 )
 
-from envotate.exceptions import EnvTypeError, EnvValueError
+__all__ = ["envotate"]
+
+
+from envotate.errors import VariableError
 from envotate.typing import (
-    Arg,
-    ArgWithCls,
-    Value,
+    AnnotatedArg,
     Class,
+    Value,
     get_root_arg,
     get_type_hints_with_extras,
+    unpack_args,
 )
+
+FALSEY = {"false", "no", "n", "0"}
+TRUTHY = {"true", "yes", "y", "1"}
+
 
 logger = logging.getLogger(__name__)
 
 
-TRUTHY_VARS = {"true", "yes", "y", "1"}
-FALSEY_VARS = {"false", "no", "n", "0"}
-
-
-def validate(
+def cast_or_raise(
+    cls: type,
     name: str,
-    source: Value,
-    annotation: type,
+    value: Value,
+    allowed_args: list[Union[Value, type]],
 ) -> Value:
-    try:
-        value = annotation(source)
-    except (ValueError, TypeError) as exc:
-        raise EnvTypeError(
-            f"'{name}' does not support the provided source value.",
-            hint=f"Can the value be cast to {annotation.__name__}?",
-        ) from exc
+
+    for annotation in allowed_args:
+        if not isinstance(annotation, (type(None), type)):
+            if value not in allowed_args:
+                raise VariableError(
+                    f"{cls.__name__}.{name} contains an invalid literal '{value}'.",
+                    hint=f"One of {allowed_args} was expected.",
+                )
+            break
+        if isinstance(annotation, type):
+            try:
+                value = annotation(value)
+            except (TypeError, ValueError) as exc:
+                if annotation == allowed_args[-1]:
+                    raise VariableError(
+                        f"{cls.__name__}.{name} could not be cast to "
+                        f"{annotation.__name__}.",
+                        hint=str(exc),
+                    )
+            else:
+                break
 
     return value
 
 
-def get_or_default(cls: type, name: str) -> Value:
+def get_or_default(cls: type, name: str, *, required: bool) -> Value:
     if name in os.environ:
         value = os.environ[name]
     else:
         try:
             value = getattr(cls, name)
         except AttributeError:
-            raise EnvValueError(
-                f"'{name}' is missing from the environment and does not have a default."
-            )
+            if required:
+                raise VariableError(
+                    f"{cls.__name__}.{name} is required but unset in the environment "
+                    "and does not have a default."
+                )
+            value = None
+
         else:
             if callable(value):
                 value = value()
@@ -64,93 +88,146 @@ def get_or_default(cls: type, name: str) -> Value:
     return value
 
 
-class Loader:
-    def __init__(
-        self, cls: type, /, *, prefix: str, export: Optional[set[str]] = None
-    ) -> None:
-        """Initialize the configuration options for a wrapped class and set a special
-        attribute to ensure that it is not reconfigured if nested elsewhere.
-        """
-        setattr(cls, "__envotations__", set())
-        self.cls = cls
-        self.prefix = prefix
-        self.export = export if export is not None else set()
+def apply_metadata(
+    cls: type, name: str, value: Value, annotation: type
+) -> tuple[Value, type]:
+    annotated_args = list(get_args(annotation))
+    annotation = get_root_arg(annotated_args.pop(0))
 
-    def __call__(self) -> None:
-        """Update the class attributes with the result of the load operation."""
-        exported = {}
-        for name, value in self.load(self.cls, prefix=self.prefix):
-            setattr(self.cls, name, value)
-            self.cls.__dict__["__envotations__"].add(name)
-            if "__all__" in self.export or name in self.export:
-                exported[name] = value
+    for arg in annotated_args:
 
-        # Expose the exported class attributes in module scope.
-        if exported:
-            sys.modules[self.cls.__module__].__dict__.update(exported)
+        # Ignore arguments that do not conform to the supported interface.
+        if not isinstance(arg, AnnotatedArg):
+            logger.debug("Ignoring unrecognized annotated argument '%s'.", arg)
+            continue
 
-    def load(
-        self, cls: type, *, prefix: str
-    ) -> Generator[tuple[str, Union[type, Value]], None, None]:
-        """Load and validate the corresponding environment variable or default value for
-        all of the annotations in the provided root (or nested) class and its bases.
-        """
-        seen = set()
-        for (name, annotation, nested) in get_type_hints_with_extras(cls):
+        # Allow uninstantiated arguments in the class definition.
+        if isinstance(arg, type):
+            arg = arg()
 
-            # Do not overwrite attributes set by a child class.
-            if name in seen:
-                continue
-            seen.add(name)
-
-            # Skip any subscripted annotations other than 'Annotated'.
-            origin = get_origin(annotation)
-            if origin is Annotated:
-                for arg in get_args(annotation):
-                    if isinstance(arg, ArgWithCls):
-                        arg.set_cls(cls)
-            elif origin is not None:
-                logger.warning(
-                    f"{name} is a subscripted annotation for '{origin}', but "
-                    "only 'typing.Annotated[...]' is supported."
-                )
-                continue
-
-            # Set the nested class on the immediate parent. If the nested class uses
-            # the decorator then it will handle its own loading, otherwise recurse into
-            # the nested class to populate the values.
-            if nested:
-                if not hasattr(annotation, "__envotations__"):
-                    for nested_name, nested_value in self.load(annotation, prefix=""):
-                        setattr(annotation, nested_name, nested_value)
-
-                yield name, annotation
-
-            # Retrieve the value from the environment.
+        # Apply the argument to the value.
+        try:
+            params = get_type_hints(arg.apply)
+            if "value" not in params and "context" not in params:
+                value = arg.apply()
+            elif "value" in params and "context" in params:
+                value = arg.apply(value, cls)
+            elif "value" in params:
+                value = arg.apply(value)
             else:
-                value = get_or_default(cls, f"{prefix}{name}")
+                value = arg.apply(cls)
 
-                # Unpack the subscripted annotation to apply the context-specific
-                # metadata and identify the root type.
-                if origin:
-                    annotated_args = list(get_args(annotation))
-                    annotation = get_root_arg(annotated_args.pop(0))
-                    for arg in annotated_args:
-                        if isinstance(arg, Arg):
-                            value = arg(value)
+        except (TypeError, ValueError) as exc:
+            raise VariableError(
+                f"{cls.__name__}.{name} could not be evaluated for "
+                f"{arg.__class__.__module__}.{arg.__class__.__name__}.",
+                hint=str(exc),
+            )
 
-                # Convert a supported boolean string variable to the appropriate boolean
-                # type value.
-                elif annotation is bool and not isinstance(value, bool):
-                    value = str(value).strip().lower()
-                    if value not in TRUTHY_VARS and value not in FALSEY_VARS:
-                        raise EnvValueError(
-                            f"{name} expectes a boolean value, but '{value}' is not in "
-                            f"{TRUTHY_VARS} or {FALSEY_VARS}."
-                        )
-                    value = bool(value in TRUTHY_VARS)
+    return value, annotation
 
-                yield name, validate(name, value, annotation)
+
+def get_lookup_name(name: str, prefix: str, aliases: Optional[dict[str, str]]) -> str:
+    if aliases and name in aliases:
+        name = aliases[name]
+    if prefix:
+        name = f"{prefix}_{name}"
+
+    return name
+
+
+def load(
+    cls: type,
+    *,
+    prefix: str,
+    aliases: Optional[dict[str, str]],
+) -> Generator[tuple[str, Union[Value, type]], None, None]:
+    """Load the variables for the annotations in a class and its bases."""
+    seen = set()
+    for (name, annotation, nested) in get_type_hints_with_extras(cls):
+
+        # Do not overwrite attributes set by a child class.
+        if name in seen:
+            continue
+        seen.add(name)
+
+        # Ignore any subscripted annotations except for context-specific metadata.
+        origin = get_origin(annotation)
+        if origin and origin not in (Literal, Annotated, Union):
+            logger.debug(
+                "%s.%s subscripts '%s' and will be ignored. "
+                "The only special generic supported is 'typing.Annotated[...]'.",
+                cls.__name__,
+                name,
+                origin,
+            )
+            continue
+
+        if nested:
+            if not hasattr(annotation, "__envotations__"):
+                for _name, _value in load(annotation, prefix="", aliases=None):
+                    setattr(annotation, _name, _value)
+            yield name, annotation
+
+        else:
+            lookup_name = get_lookup_name(name, prefix, aliases)
+            # unpacked = unpack_annotation(annotation)
+            unpacked = unpack_args(annotation)
+            value = get_or_default(
+                cls, lookup_name, required=type(None) not in unpacked
+            )
+
+            # Annotated metadata types
+            if origin is Annotated:
+                value, annotation = apply_metadata(cls, name, value, annotation)
+
+            # Boolean strings
+            elif annotation is bool and not isinstance(value, bool):
+                value = str(value).strip().lower()
+                if value not in TRUTHY and value not in FALSEY:
+                    raise VariableError(
+                        f"{cls.__name__}.{name} contains an invalid boolean string.",
+                        hint=(
+                            f"Set one of {TRUTHY} to represent `True` or one of "
+                            f"{FALSEY} to represent `False`."
+                        ),
+                    )
+                value = bool(value in TRUTHY)
+
+            # Optional value is missing
+            if value is None:
+                yield name, None
+
+            else:
+                # Literal value
+                if value in unpacked:
+                    yield name, value
+
+                else:
+                    value = cast_or_raise(cls, name, value, unpacked)
+                    yield name, value
+
+
+def configure(
+    cls: type,
+    /,
+    *,
+    prefix: str,
+    aliases: Optional[dict[str, str]],
+    export: Optional[set[str]],
+) -> None:
+    """Update the class attributes with the result of the load operation."""
+    exported = {}
+    cls.__envotations__ = set()  # type: ignore[attr-defined]
+    for name, value in load(cls, prefix=prefix, aliases=aliases):
+        setattr(cls, name, value)
+        cls.__envotations__.add(name)  # type: ignore[attr-defined]
+        if export and ("__all__" in export or name in export):
+            exported[name] = value
+
+    # Expose any configured class attributes in the module namespace.
+    if exported:
+        sys.modules[cls.__module__].__dict__.update(exported)
 
 
 @overload
@@ -163,6 +240,7 @@ def envotate(
     *,
     prefix: str = ...,
     export: Optional[set[str]] = ...,
+    aliases: Optional[dict[str, str]] = ...,
 ) -> Callable[[type[Class]], type[Class]]:
     ...  # pragma: no cover
 
@@ -172,27 +250,26 @@ def envotate(
     /,
     *,
     prefix: str = "",
+    aliases: Optional[dict[str, str]] = None,
     export: Optional[set[str]] = None,
 ) -> Union[type[Class], Callable[[type[Class]], type[Class]]]:
-    """Decorate a class to be configured from the environment.
+    """Decorate a class to be configured from environment variables according to the
+    type annotations of the class.
 
-    **Parameters:**
+    **Options:**
 
-    * **cls** - A class with annotations that will be used to validate and populate its
-    attributes from either the environment or the class defaults. An attribute must
-    be annotated to be loaded.
     * **prefix** - A string prefix used to form the environment lookup key for each
-    annotation (except nested classes) discovered in the root class or any of its
-    bases. Default is `""`.
-    * **export** - An optional set that contains one or more strings that identify the
-    attributes that should be exported from the clas to the module namespace. If the set
-    includes the special string `__all__` as the sole member then all attributes will be
-    exported. Default is `None`.
+    annotation discovered in the root class or any of its bases.
+    * **aliases** - A mapping of class attributes and variable names to represent the
+    specific environment lookup key to use instead of the attribute name.
+    * **export** - A set of one or more class attributes to export as variables in the
+    module namespace for the class. If the set consists of a single string '__all__'
+    then all of the attributes will be exported.
     """
 
     def wrap(cls: type[Class]) -> type[Class]:
-        loader = Loader(cls, prefix=prefix, export=export)
-        loader()
+        configure(cls, prefix=prefix, aliases=aliases, export=export)
+
         return cls
 
     # Called as @envotate(...).

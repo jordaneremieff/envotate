@@ -26,8 +26,8 @@ edit_uri: ""
 
 nav:
     - Introduction: "index.md"
+    - Usage: "usage.md"
 
 markdown_extensions:
-  - mkautodoc
   - pymdownx.highlight
   - pymdownx.superfences

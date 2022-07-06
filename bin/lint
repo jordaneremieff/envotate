@@ -7,6 +7,6 @@ fi
 
 set -ex
 
-${PREFIX}poetry run black envotate tests --check
-${PREFIX}poetry run flake8 envotate
+# ${PREFIX}poetry run black envotate tests --check
+# ${PREFIX}poetry run flake8 envotate
 ${PREFIX}poetry run mypy envotate

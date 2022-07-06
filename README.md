@@ -1,10 +1,22 @@
-# Envotate
+<h1 align="center">
+    Envotate
+</h1>
+<p align="center">
+    <em>Settings management using environment variables and type annotations.</em>
+</p>
+<p align="center">
+    <a href="https://github.com/jordaneremieff/envotate/actions/workflows/test.yml">
+    <img src="https://img.shields.io/github/workflow/status/jordaneremieff/envotate/Test/main" alt="GitHub workflow status (Test)" >
+    </a>
+    <a href="https://pypi.org/project/envotate" target="_blank">
+        <img src="https://img.shields.io/pypi/v/envotate" alt="PyPi package">
+    </a>
+    <a href="https://pypi.org/project/envotate" target="_blank">
+        <img src="https://img.shields.io/pypi/pyversions/envotate" alt="Supported Python versions">
+    </a>
+</p>
 
-**Work in progress**: Things may change/break at this point.
-
-Settings management using environment variables and type annotations.
-
-**Requirements**: Python 3.9+
+**Work in progress**
 
 ## Installation
 
@@ -34,7 +46,7 @@ from envotate import envotate, Annotated
 from envotate.types import Choice
 
 
-@envotate(prefix="DB_")
+@envotate(prefix="DB")
 class Database:
     USER: str
     PASSWORD: str
