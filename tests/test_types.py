@@ -245,8 +245,7 @@ def test_annotated_directory_and_file_type(monkeypatch, export_to_module):
         class InvalidDirBase:
             APP: Annotated[Path, Directory("unknown/base")]
 
-    assert excinfo.match("InvalidDirBase.APP")
-    assert excinfo.match("unknown/base")
+    assert excinfo.match("'unknown/base' could not be resolved")
 
     with pytest.raises(VariableError) as excinfo:
 
@@ -254,8 +253,7 @@ def test_annotated_directory_and_file_type(monkeypatch, export_to_module):
         class InvalidFileBase:
             APP: Annotated[Path, File("unknown/base")]
 
-    assert excinfo.match("InvalidFileBase.APP")
-    assert excinfo.match("unknown/base")
+    assert excinfo.match("'unknown/base' could not be resolved")
 
 
 def test_method_arg():
@@ -263,7 +261,7 @@ def test_method_arg():
     class URLSettings:
         APP_ENV: str = "prod"
         DOMAIN: str = "mysite.com"
-        PUBLIC_URL: Annotated[Union[bytes, str, None], Method("make_public_url")]
+        PUBLIC_URL: Annotated[Union[bytes, str, None], Method("make_public_url")] = ""
 
         @classmethod
         def make_public_url(cls) -> str:
@@ -387,4 +385,4 @@ def test_literal_types(monkeypatch):
         class InvalidLiteralConfig(LiteralConfig):
             pass
 
-    assert excinfo.match("InvalidLiteralConfig.APP_ENV")
+    assert excinfo.match("APP_ENV")

@@ -12,3 +12,7 @@ class Error(Exception):
 
 class VariableError(Error):
     """A variable is missing, invalid, or not supported for its expected type."""
+
+
+class AnnotationError(Error):
+    """An annotation is unsupported or invalid."""

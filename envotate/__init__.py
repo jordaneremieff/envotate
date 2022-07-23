@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from dataclasses import asdict, dataclass, field
+from pprint import pformat
 from typing import (
     Annotated,
     Callable,
@@ -10,6 +12,7 @@ from typing import (
     Literal,
     Optional,
     Union,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -19,15 +22,8 @@ from typing import (
 __all__ = ["envotate"]
 
 
-from envotate.errors import VariableError
-from envotate.typing import (
-    AnnotatedArg,
-    Class,
-    Value,
-    get_root_arg,
-    get_type_hints_with_extras,
-    unpack_args,
-)
+from envotate.errors import AnnotationError, VariableError
+from envotate.typing import AnnotatedArg, Class, Value, unpack_args
 
 FALSEY = {"false", "no", "n", "0"}
 TRUTHY = {"true", "yes", "y", "1"}
@@ -36,198 +32,225 @@ TRUTHY = {"true", "yes", "y", "1"}
 logger = logging.getLogger(__name__)
 
 
-def cast_or_raise(
-    cls: type,
-    name: str,
-    value: Value,
-    allowed_args: list[Union[Value, type]],
-) -> Value:
+@dataclass
+class Envotation:
+    type: type
+    path: str
+    origin: Optional[type] = field(init=False)  # type: ignore[valid-type]
+    args: list[type] = field(init=False, default_factory=list)  # type: ignore[valid-type]
+    metadata: list[AnnotatedArg] = field(init=False, default_factory=list)
 
-    for annotation in allowed_args:
-        if not isinstance(annotation, (type(None), type)):
-            if value not in allowed_args:
-                raise VariableError(
-                    f"{cls.__name__}.{name} contains an invalid literal '{value}'.",
-                    hint=f"One of {allowed_args} was expected.",
-                )
-            break
-        if isinstance(annotation, type):
-            try:
-                value = annotation(value)
-            except (TypeError, ValueError) as exc:
-                if annotation == allowed_args[-1]:
-                    raise VariableError(
-                        f"{cls.__name__}.{name} could not be cast to "
-                        f"{annotation.__name__}.",
-                        hint=str(exc),
-                    )
-            else:
-                break
+    def __post_init__(self) -> None:
+        self.origin = get_origin(self.type)
+        if self.origin is Annotated:
+            self.args = unpack_args(self.type)
+            args = list(get_args(self.type))
+            self.type = args.pop(0)
+            # self.origin = get_origin(self.type)
+            for arg in args:
+                if not isinstance(arg, AnnotatedArg):
+                    logger.debug("Ignoring unrecognized annotated argument '%s'.", arg)
+                    continue
+                if isinstance(arg, type):
+                    arg = cast(AnnotatedArg, arg())
+                self.metadata.append(arg)
 
-    return value
+        if self.origin in (Literal, Union, Annotated):
+            self.args = unpack_args(self.type)
+        elif self.origin is not None:
+            raise AnnotationError(
+                f"'{self.origin}' is not a supported type form.",
+                hint=(
+                    "An origin may only be one of Literal, Union, Optional, "
+                    "or Annotated."
+                ),
+            )
 
+    # def __repr__(self) -> str:
+    #     return pformat(self.dump())
 
-def get_or_default(cls: type, name: str, *, required: bool) -> Value:
-    if name in os.environ:
-        value = os.environ[name]
-    else:
+    @property
+    def is_literal(self) -> bool:
+        return self.origin is Literal
+
+    @property
+    def is_union(self) -> bool:
+        return self.origin is Union
+
+    @property
+    def is_optional(self) -> bool:
+        if self.is_union and type(None) in self.args:
+            return True
+        return False
+
+    @property
+    def is_bool(self) -> bool:
+        return self.type is bool
+
+    def cast(self, value: Value) -> Value:
         try:
-            value = getattr(cls, name)
-        except AttributeError:
-            if required:
-                raise VariableError(
-                    f"{cls.__name__}.{name} is required but unset in the environment "
-                    "and does not have a default."
-                )
-            value = None
-
-        else:
-            if callable(value):
-                value = value()
-
-    return value
-
-
-def apply_metadata(
-    cls: type, name: str, value: Value, annotation: type
-) -> tuple[Value, type]:
-    annotated_args = list(get_args(annotation))
-    annotation = get_root_arg(annotated_args.pop(0))
-
-    for arg in annotated_args:
-
-        # Ignore arguments that do not conform to the supported interface.
-        if not isinstance(arg, AnnotatedArg):
-            logger.debug("Ignoring unrecognized annotated argument '%s'.", arg)
-            continue
-
-        # Allow uninstantiated arguments in the class definition.
-        if isinstance(arg, type):
-            arg = arg()
-
-        # Apply the argument to the value.
-        try:
-            params = get_type_hints(arg.apply)
-            if "value" not in params and "context" not in params:
-                value = arg.apply()
-            elif "value" in params and "context" in params:
-                value = arg.apply(value, cls)
-            elif "value" in params:
-                value = arg.apply(value)
-            else:
-                value = arg.apply(cls)
-
+            value = self.type(value)
         except (TypeError, ValueError) as exc:
-            raise VariableError(
-                f"{cls.__name__}.{name} could not be evaluated for "
-                f"{arg.__class__.__module__}.{arg.__class__.__name__}.",
-                hint=str(exc),
-            )
-
-    return value, annotation
-
-
-def get_lookup_name(name: str, prefix: str, aliases: Optional[dict[str, str]]) -> str:
-    if aliases and name in aliases:
-        name = aliases[name]
-    if prefix:
-        name = f"{prefix}_{name}"
-
-    return name
-
-
-def load(
-    cls: type,
-    *,
-    prefix: str,
-    aliases: Optional[dict[str, str]],
-) -> Generator[tuple[str, Union[Value, type]], None, None]:
-    """Load the variables for the annotations in a class and its bases."""
-    seen = set()
-    for (name, annotation, nested) in get_type_hints_with_extras(cls):
-
-        # Do not overwrite attributes set by a child class.
-        if name in seen:
-            continue
-        seen.add(name)
-
-        # Ignore any subscripted annotations except for context-specific metadata.
-        origin = get_origin(annotation)
-        if origin and origin not in (Literal, Annotated, Union):
-            logger.debug(
-                "%s.%s subscripts '%s' and will be ignored. "
-                "The only special generic supported is 'typing.Annotated[...]'.",
-                cls.__name__,
-                name,
-                origin,
-            )
-            continue
-
-        if nested:
-            if not hasattr(annotation, "__envotations__"):
-                for _name, _value in load(annotation, prefix="", aliases=None):
-                    setattr(annotation, _name, _value)
-            yield name, annotation
-
-        else:
-            lookup_name = get_lookup_name(name, prefix, aliases)
-            # unpacked = unpack_annotation(annotation)
-            unpacked = unpack_args(annotation)
-            value = get_or_default(
-                cls, lookup_name, required=type(None) not in unpacked
-            )
-
-            # Annotated metadata types
-            if origin is Annotated:
-                value, annotation = apply_metadata(cls, name, value, annotation)
-
-            # Boolean strings
-            elif annotation is bool and not isinstance(value, bool):
-                value = str(value).strip().lower()
-                if value not in TRUTHY and value not in FALSEY:
-                    raise VariableError(
-                        f"{cls.__name__}.{name} contains an invalid boolean string.",
-                        hint=(
-                            f"Set one of {TRUTHY} to represent `True` or one of "
-                            f"{FALSEY} to represent `False`."
-                        ),
-                    )
-                value = bool(value in TRUTHY)
-
-            # Optional value is missing
-            if value is None:
-                yield name, None
-
+            if self.args and self.type != self.args[-1]:
+                value = None
             else:
-                # Literal value
-                if value in unpacked:
-                    yield name, value
+                raise AnnotationError(
+                    f"'{self.path} could not be cast to " f"{self.type.__qualname__}.",
+                    hint=str(exc),
+                )
+
+        return value
+
+    def dump(self) -> dict[str, Union[Value, type]]:  # type: ignore[valid-type]
+        return asdict(self)
+
+
+@dataclass
+class Resolver:
+    prefix: Optional[str]
+    aliases: Optional[dict[str, str]]
+    export: Optional[set[str]]
+
+    def resolve(
+        self,
+        cls: type[Class],
+        path: Optional[str] = None,
+    ) -> Generator[tuple[str, Union[Value, type]], None, None]:
+        seen = set()
+        for base in cls.__mro__:
+            if not base or base is object:
+                continue
+            for attribute, annotation in get_type_hints(
+                base,
+                include_extras=True,
+            ).items():
+                if attribute in seen:
+                    continue
+                seen.add(attribute)
+
+                if hasattr(annotation, "__envotations__"):
+                    yield attribute, annotation
+                elif getattr(annotation, "__annotations__", None):
+                    annotation.__envotations__ = set()
+                    for _attr, _val in self.resolve(annotation, path=base.__qualname__):
+                        setattr(annotation, _attr, _val)
+                        annotation.__envotations__.add(_attr)
+                    yield attribute, annotation
 
                 else:
-                    value = cast_or_raise(cls, name, value, unpacked)
-                    yield name, value
+                    yield attribute, self.get(
+                        cls=base,
+                        path=path,
+                        attribute=attribute,
+                        annotation=annotation,
+                    )
+
+    def get(
+        self,
+        *,
+        cls: type[Class],
+        attribute: str,
+        annotation: type,
+        path: Optional[str] = None,
+    ) -> Value:
+        name = attribute
+        path = f"{path}.{name}" if path is not None else attribute
+        envotation = Envotation(annotation, path)
+
+        if self.aliases and path in self.aliases:
+            name = self.aliases[path]
+        if self.prefix:
+            name = f"{self.prefix}_{name}"
+
+        # FIXME: Optional type vs. check for default vs. needs to exist in env, etc.
+        value = os.environ.get(name, getattr(cls, attribute, None))
+        if value is None:
+            if not envotation.is_optional:
+                raise VariableError(
+                    f"'{path}' is required but missing from the environment and has "
+                    "not set a default."
+                )
+            return value
+
+        if callable(value):
+            value = value()
+
+        if envotation.metadata:
+            for arg in envotation.metadata:
+                try:
+                    params = get_type_hints(arg.apply)
+                    if "value" not in params and "context" not in params:
+                        value = arg.apply()  # type: ignore[assignment]
+                    elif "value" in params and "context" in params:
+                        value = arg.apply(value, cls)  # type: ignore[assignment]
+                    elif "value" in params:
+                        value = arg.apply(value)  # type: ignore[assignment]
+                    else:
+                        value = arg.apply(cls)  # type: ignore[assignment]
+                except (TypeError, ValueError) as exc:
+                    arg_path = arg.__class__.__qualname__
+                    raise VariableError(
+                        f"'{path}' could not be evaluated for '{arg_path}'.",
+                        hint=str(exc),
+                    )
+
+        if envotation.is_bool and not isinstance(value, bool):
+            if str(value).strip().lower() not in TRUTHY | FALSEY:
+                raise VariableError(
+                    f"{path} is an invalid boolean.",
+                    hint=(
+                        f"Set one of {TRUTHY} to represent `True` or one of "
+                        f"{FALSEY} to represent `False`."
+                    ),
+                )
+            return bool(value in TRUTHY)
+
+        if envotation.is_literal and value in envotation.args:
+            return value
+
+        if envotation.args:
+            for arg in envotation.args:
+                if not isinstance(arg, (type(None), type)):
+                    if value not in envotation.args:
+                        raise VariableError(
+                            f"'{path}' contains an invalid literal '{value}'.",
+                            hint=f"One of {envotation.args} was expected.",
+                        )
+                    break
+                if isinstance(envotation.type, type):
+                    if value := envotation.cast(value):  # type: ignore[assignment]
+                        break
+
+            return value
+
+        return envotation.cast(value)
 
 
 def configure(
     cls: type,
     /,
     *,
-    prefix: str,
+    prefix: Optional[str],
     aliases: Optional[dict[str, str]],
     export: Optional[set[str]],
 ) -> None:
     """Update the class attributes with the result of the load operation."""
-    exported = {}
-    cls.__envotations__ = set()  # type: ignore[attr-defined]
-    for name, value in load(cls, prefix=prefix, aliases=aliases):
-        setattr(cls, name, value)
-        cls.__envotations__.add(name)  # type: ignore[attr-defined]
-        if export and ("__all__" in export or name in export):
-            exported[name] = value
 
-    # Expose any configured class attributes in the module namespace.
-    if exported:
-        sys.modules[cls.__module__].__dict__.update(exported)
+    cls.__envotations__ = set()  # type: ignore[attr-defined]
+    exportable = {}
+    resolver = Resolver(
+        prefix=prefix,
+        aliases=aliases,
+        export=export,
+    )
+    for attribute, value in resolver.resolve(cls):
+        setattr(cls, attribute, value)
+        cls.__envotations__.add(attribute)  # type: ignore[attr-defined]
+        if export and attribute in export or export == {"__all__"}:
+            exportable[attribute] = value
+
+    if exportable:
+        sys.modules[cls.__module__].__dict__.update(exportable)
 
 
 @overload
@@ -249,7 +272,7 @@ def envotate(
     cls: Optional[type[Class]] = None,
     /,
     *,
-    prefix: str = "",
+    prefix: Optional[str] = None,
     aliases: Optional[dict[str, str]] = None,
     export: Optional[set[str]] = None,
 ) -> Union[type[Class], Callable[[type[Class]], type[Class]]]:
@@ -268,7 +291,12 @@ def envotate(
     """
 
     def wrap(cls: type[Class]) -> type[Class]:
-        configure(cls, prefix=prefix, aliases=aliases, export=export)
+        configure(
+            cls,
+            prefix=prefix,
+            aliases=aliases,
+            export=export,
+        )
 
         return cls
 
