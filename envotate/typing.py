@@ -41,21 +41,6 @@ class AnnotatedArg(Protocol):
         ...  # pragma: nocover
 
 
-def get_type_hints_with_extras(
-    cls: type,
-) -> Generator[tuple[str, type, bool], None, None]:
-    for base in cls.__mro__:
-        if not base or base is object:
-            continue
-        for name, annotation in get_type_hints(base, include_extras=True).items():
-            nested = bool(
-                annotation
-                and annotation is not object
-                and hasattr(annotation, "__annotations__")
-            )
-            yield name, annotation, nested
-
-
 def get_root_arg(annotation: type) -> type:
     if origin := get_origin(annotation):
         return get_root_arg(origin)

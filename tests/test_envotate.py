@@ -8,7 +8,7 @@ from typing import Literal, Optional, Union
 import pytest
 
 from envotate import FALSEY, TRUTHY, envotate
-from envotate.errors import VariableError
+from envotate.errors import AnnotationError, VariableError
 
 
 class Database:
@@ -42,10 +42,11 @@ def default_test_settings_environ(monkeypatch):
 def test_populate_from_environment():
     @envotate
     class TestSettings(Settings):
-        APP_VERSION: str = "0.2.0"
         CALLABLE: str = lambda: "callable"
-        DATABASE: Database
 
+    print(TestSettings.__dict__)
+
+    assert TestSettings.APP_ID == 2
     assert TestSettings.APP_ENV == "dev"
     assert TestSettings.CALLABLE == "callable"
     assert TestSettings.DEBUG is True
@@ -123,7 +124,7 @@ def test_raise_value_error_for_unknown_boolean_strings(
 def test_raise_type_error_for_invalid_value(monkeypatch):
     monkeypatch.setenv("INT", "1.1")
     monkeypatch.setenv("FLOAT", "string")
-    with pytest.raises(VariableError) as excinfo:
+    with pytest.raises(AnnotationError) as excinfo:
 
         @envotate
         class TestSettings(Settings):
@@ -131,7 +132,7 @@ def test_raise_type_error_for_invalid_value(monkeypatch):
 
     assert excinfo.match("INT")
 
-    with pytest.raises(VariableError) as excinfo:
+    with pytest.raises(AnnotationError) as excinfo:
 
         @envotate
         class TestSettings(Settings):
